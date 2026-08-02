@@ -26,7 +26,7 @@ npm test           # node --test (headless, no network)
 An agent can install and verify everything on its own:
 
 ```sh
-git clone <repo-url> larapaper-studio
+git clone https://github.com/sanzharid/larapaper-studio.git
 cd larapaper-studio/mcp
 ./install.sh --print-config
 ```
