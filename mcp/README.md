@@ -45,7 +45,7 @@ Generic MCP stdio config — point `node` at `server.js` with an absolute path:
   "mcpServers": {
     "larapaper-studio": {
       "command": "node",
-      "args": ["C:/Users/User/copilot-agent/larapaper-studio-tauri/mcp/server.js"]
+      "args": ["/absolute/path/to/larapaper-studio/mcp/server.js"]
     }
   }
 }
