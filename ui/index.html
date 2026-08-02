@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: http: https:; connect-src 'self'" />
+  <title>Larapaper Studio</title>
+  <link rel="stylesheet" href="css/app.css" />
+  <link rel="stylesheet" href="css/trmnl-preview.css" />
+</head>
+<body>
+  <header id="toolbar">
+    <div class="tb-group tb-brand">
+      <span class="brand-mark">▮</span>
+      <span class="brand-name">Larapaper Studio</span>
+    </div>
+    <div class="tb-group">
+      <button id="btn-new" class="tb-btn" title="New project (Ctrl+N)">New</button>
+      <button id="btn-open" class="tb-btn" title="Open project (Ctrl+O)">Open</button>
+      <button id="btn-save" class="tb-btn" title="Save project (Ctrl+S)">Save</button>
+    </div>
+    <div class="tb-sep"></div>
+    <div class="tb-group">
+      <button id="btn-undo" class="tb-btn" title="Undo (Ctrl+Z)">↶</button>
+      <button id="btn-redo" class="tb-btn" title="Redo (Ctrl+Y)">↷</button>
+    </div>
+    <div class="tb-sep"></div>
+    <div class="tb-group tb-zoom">
+      <button id="btn-zoom-out" class="tb-btn" title="Zoom out">−</button>
+      <span id="zoom-label">100%</span>
+      <button id="btn-zoom-in" class="tb-btn" title="Zoom in">+</button>
+      <button id="btn-zoom-fit" class="tb-btn" title="Fit to window">Fit</button>
+    </div>
+    <div class="tb-spacer"></div>
+    <div class="tb-group">
+      <span id="dirty-indicator" class="dirty" title="Unsaved changes" hidden>●</span>
+      <button id="btn-preview" class="tb-btn" title="Full-window device preview">Preview</button>
+      <button id="btn-export-zip" class="tb-btn" title="Download recipe as ZIP">Export ZIP</button>
+      <button id="btn-export-folder" class="tb-btn" title="Write recipe files to a folder">Export folder</button>
+      <button id="btn-push" class="tb-btn tb-primary" title="Push recipe to your Larapaper server">⇪ Push to Larapaper</button>
+    </div>
+  </header>
+
+  <div id="workbench">
+    <aside id="palette" aria-label="Widget palette"></aside>
+
+    <main id="canvas-area">
+      <div id="layout-tabs" role="tablist"></div>
+      <div id="canvas-scroll">
+        <div id="canvas-stage">
+          <div id="device-screen">
+            <div id="device-view" class="view lp-view"></div>
+          </div>
+          <div id="drop-marker" hidden></div>
+          <div id="selection-box" hidden></div>
+        </div>
+      </div>
+      <div id="canvas-statusbar">
+        <span id="status-layout"></span>
+        <span id="grid-config">Grid <input id="grid-cols" type="number" min="1" max="12" title="Grid columns"> × <input id="grid-rows" type="number" min="1" max="12" title="Grid rows"></span>
+        <span id="status-hint">Drag widgets from the palette onto the screen · Del removes · Ctrl+D duplicates</span>
+      </div>
+    </main>
+
+    <aside id="side-panel">
+      <div id="panel-tabs" role="tablist">
+        <button class="panel-tab active" data-panel="properties" role="tab">Properties</button>
+        <button class="panel-tab" data-panel="data" role="tab">Data &amp; Config</button>
+        <button class="panel-tab" data-panel="recipe" role="tab">Recipe</button>
+        <button class="panel-tab" data-panel="sources" role="tab">Sources</button>
+      </div>
+      <div id="panel-body">
+        <div id="panel-properties" class="panel-page active"></div>
+        <div id="panel-data" class="panel-page"></div>
+        <div id="panel-recipe" class="panel-page"></div>
+        <div id="panel-sources" class="panel-page"></div>
+      </div>
+    </aside>
+  </div>
+
+  <div id="modal-root"></div>
+  <div id="toast-root"></div>
+
+  <script src="vendor/qrcode.js"></script>
+  <script src="shared/yaml.js"></script>
+  <script src="shared/liquid-eval.js"></script>
+  <script src="shared/conditions.js"></script>
+  <script src="shared/search-binding.js"></script>
+  <script src="shared/widgets.js"></script>
+  <script src="shared/recipe.js"></script>
+  <script src="shared/sources.js"></script>
+  <script src="js/bridge.js"></script>
+  <script src="js/state.js"></script>
+  <script src="js/render.js"></script>
+  <script src="js/canvas.js"></script>
+  <script src="js/inspector.js"></script>
+  <script src="js/panels.js"></script>
+  <script src="js/panel-sources.js"></script>
+  <script src="js/push.js"></script>
+  <script src="js/preview.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

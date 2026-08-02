@@ -1,0 +1,11 @@
+node_modules/
+dist/
+out/
+*.log
+.DS_Store
+
+# Rust build output (large)
+src-tauri/target/
+
+# MCP server deps
+mcp/node_modules/

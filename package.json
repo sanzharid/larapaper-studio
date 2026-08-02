@@ -1,0 +1,17 @@
+{
+  "name": "larapaper-studio-tauri",
+  "productName": "Larapaper Studio",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Visual drag-and-drop recipe designer for Larapaper / TRMNL e-ink devices (Tauri edition)",
+  "license": "MIT",
+  "scripts": {
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "test": "node --test test/*.test.js"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.11.4",
+    "yaml": "^2.9.0"
+  }
+}
