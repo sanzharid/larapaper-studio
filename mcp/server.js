@@ -289,6 +289,24 @@ export const TOOLS = [
     run: (s, a) => P.renderLayout(s, a)
   },
   {
+    name: 'lp_screenshot_layout',
+    description:
+      'Rasterize one layout to a PNG via headless Chromium so you can SEE the design ' +
+      '(font sizes, wrapping, overflow, alignment) instead of guessing from HTML. Uses the ' +
+      'same render pipeline and framework CSS as the studio canvas. Returns the image path — ' +
+      'view it with a vision tool; do not inline the bytes.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        layout: { type: 'string', enum: ['full', 'half_horizontal', 'half_vertical', 'quadrant'], default: 'full' },
+        scale: { type: 'number', description: 'Device pixel ratio for the raster (default 2).', default: 2 },
+        out: { type: 'string', description: 'Optional PNG output path.' },
+        outDir: { type: 'string', description: 'Optional directory for the PNG + the debug HTML.' }
+      }
+    },
+    run: (s, a) => P.screenshotLayout(s, a)
+  },
+  {
     name: 'lp_list_layouts',
     description: 'List the four layouts: enabled flag, grid cols×rows and widget count.',
     inputSchema: { type: 'object', properties: {} },

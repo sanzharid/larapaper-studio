@@ -10,7 +10,11 @@
  * (resolveAreas / firstFreeArea / normalizeArea) is already exported.
  */
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
+import { existsSync } from 'node:fs';
+import { execFile, execFileSync } from 'node:child_process';
+import { promisify } from 'node:util';
 
 import LPRecipe from '../ui/shared/recipe.js';
 import LPWidgets from '../ui/shared/widgets.js';
@@ -570,3 +574,121 @@ export function renderLayout(session, args) {
   const html = LiquidEval.render(parts.layoutHtml + (parts.barHtml || ''), ctx);
   return { layout: layoutKey, html, text: htmlToText(html) };
 }
+
+const PREVIEW_CSS_URL = new URL('../ui/css/trmnl-preview.css', import.meta.url);
+
+const execFileAsync = promisify(execFile);
+
+/** Headless Chromium to rasterize with, or null. Reuses the browser the agent already ships. */
+function resolveBrowser() {
+  const candidates = [
+    process.env.LP_BROWSER_EXECUTABLE_PATH,
+    process.env.CHROME_PATH,
+    process.env.PUPPETEER_EXECUTABLE_PATH
+  ].filter(Boolean);
+  for (const c of candidates) {
+    if (existsSync(c)) return c;
+  }
+  try {
+    return execFileSync('which', ['google-chrome'], { encoding: 'utf8' }).trim() || null;
+  } catch (e) {
+    try {
+      return execFileSync('which', ['chromium'], { encoding: 'utf8' }).trim() || null;
+    } catch (e2) {
+      return null;
+    }
+  }
+}
+
+/**
+ * Rasterize one layout to PNG so the agent can *see* what it designed.
+ *
+ * Reuses the same pipeline as lp_render_layout (buildViewParts +
+ * buildPreviewContext + LiquidEval) wrapped in the editor's own `.lp-view`
+ * markup and framework CSS, so the image matches the canvas rather than a
+ * re-implementation of it. Returns the PNG path (not a base64 blob: the agent
+ * reads the file, and a data URL would flood its context).
+ */
+export async function screenshotLayout(session, args) {
+  const noDoc = requireDoc(session);
+  if (noDoc) return noDoc;
+  args = args || {};
+  const layoutKey = args.layout ? String(args.layout) : 'full';
+
+  const rendered = renderLayout(session, args);
+  if (rendered.error) return rendered;
+
+  const browser = resolveBrowser();
+  if (!browser) {
+    return err(
+      'No headless Chromium found. Set LP_BROWSER_EXECUTABLE_PATH to a Chrome/Chromium ' +
+      'binary, or install google-chrome / chromium.'
+    );
+  }
+
+  let css;
+  try {
+    css = await fs.readFile(PREVIEW_CSS_URL, 'utf8');
+  } catch (e) {
+    return err('Cannot read preview CSS (' + PREVIEW_CSS_URL.pathname + '): ' + e.message);
+  }
+
+  const device = LPRecipe.normalizeDevice(session.doc.device);
+  const size = LPRecipe.deviceLayoutSizes(device)[layoutKey];
+  const scale = Number(args.scale) > 0 ? Number(args.scale) : 2;
+  const page =
+    '<!doctype html><html><head><meta charset="utf-8"><style>\n' +
+    'html,body{margin:0;padding:0;background:#fff}\n' +
+    css +
+    '\n</style></head><body><div class="view lp-view' +
+    (layoutKey !== 'full' ? ' lp-pad lp-smallbar' : '') +
+    '" style="width:' + size.w + 'px;height:' + size.h + 'px;background:#fff">' +
+    rendered.html +
+    '</div></body></html>';
+
+  const outDir = args.outDir
+    ? path.resolve(String(args.outDir))
+    : await fs.mkdtemp(path.join(os.tmpdir(), 'larapaper-shot-'));
+  try {
+    await fs.mkdir(outDir, { recursive: true });
+  } catch (e) {
+    return err('Cannot create output directory "' + outDir + '": ' + e.message);
+  }
+
+  const htmlPath = path.join(outDir, 'layout-' + layoutKey + '.html');
+  const pngPath = args.out ? path.resolve(String(args.out)) : path.join(outDir, 'layout-' + layoutKey + '.png');
+  await fs.writeFile(htmlPath, page, 'utf8');
+
+  const chromeArgs = [
+    '--headless',
+    '--disable-gpu',
+    '--no-sandbox',
+    '--hide-scrollbars',
+    '--force-device-scale-factor=' + scale,
+    '--window-size=' + size.w + ',' + size.h,
+    '--screenshot=' + pngPath,
+    'file://' + htmlPath
+  ];
+  try {
+    await execFileAsync(browser, chromeArgs, { timeout: 60000 });
+  } catch (e) {
+    // Chromium exits non-zero on some headless quirk yet still writes the file,
+    // so only a missing/empty output is a real failure.
+    if (!existsSync(pngPath)) {
+      return err('Headless Chromium failed to write a screenshot: ' + (e.message || e));
+    }
+  }
+  if (!existsSync(pngPath)) return err('Headless Chromium produced no file at "' + pngPath + '".');
+
+  const stat = await fs.stat(pngPath);
+  return {
+    layout: layoutKey,
+    path: pngPath,
+    htmlPath,
+    width: size.w * scale,
+    height: size.h * scale,
+    bytes: stat.size,
+    text: rendered.text
+  };
+}
+

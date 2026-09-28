@@ -5,6 +5,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 import { createSession, DEFAULT_USER_AGENT } from './project.js';
 import { TOOLS, dispatch } from './server.js';
@@ -27,10 +28,10 @@ const EXPECTED_TOOLS = [
   'lp_list_widget_types', 'lp_add_widget', 'lp_update_widget', 'lp_move_widget',
   'lp_remove_widget', 'lp_set_condition', 'lp_set_sample_data', 'lp_add_source',
   'lp_fetch_source', 'lp_validate', 'lp_build_recipe', 'lp_render_layout',
-  'lp_list_layouts'
+  'lp_screenshot_layout', 'lp_list_layouts'
 ];
 
-test('tool registry exposes all 17 documented tools with schemas', () => {
+test('tool registry exposes all 18 documented tools with schemas', () => {
   assert.deepEqual(TOOLS.map((t) => t.name).sort(), EXPECTED_TOOLS.slice().sort());
   for (const t of TOOLS) {
     assert.ok(t.description && t.description.length > 20, t.name + ' description');
@@ -249,4 +250,32 @@ test('sample data merge mode', async () => {
   await dispatch(s, 'lp_set_sample_data', { data: { a: 1 } });
   const r = await dispatch(s, 'lp_set_sample_data', { data: { b: 2 }, mode: 'merge' });
   assert.deepEqual(r.staticDataKeys.sort(), ['a', 'b']);
+});
+
+test('lp_screenshot_layout writes a real PNG of the rendered layout', async () => {
+  const s = createSession();
+  await dispatch(s, 'lp_create_project', { name: 'Shot', device: 'TRMNL OG' });
+  await dispatch(s, 'lp_add_widget', { type: 'title', props: { text: 'GVB STATUS' } });
+
+  const r = await dispatch(s, 'lp_screenshot_layout', { layout: 'full' });
+  if (r.error && /No headless Chromium/.test(r.error)) {
+    /* No browser on this host: the tool must fail cleanly, not crash. */
+    assert.match(r.error, /LP_BROWSER_EXECUTABLE_PATH/);
+    return;
+  }
+  assert.equal(r.error, undefined, r.error);
+  assert.equal(r.layout, 'full');
+  assert.equal(r.width, 1560, 'default scale 2 doubles the 780px view box');
+  assert.equal(r.height, 920);
+  /* A real rasterized PNG: non-trivial size and the PNG magic number on disk. */
+  assert.ok(r.bytes > 1000, 'expected a non-trivial PNG, got ' + r.bytes + ' bytes');
+  const head = readFileSync(r.path).subarray(0, 8);
+  assert.deepEqual([...head], [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+});
+
+test('lp_screenshot_layout rejects an unknown layout instead of writing a blank image', async () => {
+  const s = createSession();
+  await dispatch(s, 'lp_create_project', { name: 'Shot2' });
+  const r = await dispatch(s, 'lp_screenshot_layout', { layout: 'nope' });
+  assert.match(r.error, /Unknown layout/);
 });
