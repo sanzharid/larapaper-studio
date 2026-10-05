@@ -10,6 +10,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::io::Write;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tauri::Manager;
 use tauri_plugin_dialog::DialogExt;
@@ -276,15 +277,34 @@ async fn save_project(
         return json!({"ok": false, "canceled": true});
     };
     let path = path.to_string();
-    match std::fs::write(&path, json) {
+    match write_atomic(std::path::Path::new(&path), json.as_bytes()) {
         Ok(()) => json!({"ok": true, "filePath": path}),
         Err(e) => json!({"ok": false, "error": e.to_string()}),
     }
 }
 
+/// Writes via a temp file in the same folder + rename, so a crash or full disk
+/// mid-save never leaves the only copy of a project truncated.
+fn write_atomic(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    let mut tmp_name = path.file_name().unwrap_or_default().to_os_string();
+    tmp_name.push(".tmp");
+    let tmp = path.with_file_name(tmp_name);
+    let result = (|| {
+        let mut f = std::fs::File::create(&tmp)?;
+        f.write_all(bytes)?;
+        f.sync_all()?;
+        drop(f);
+        std::fs::rename(&tmp, path)
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result
+}
+
 #[tauri::command(rename_all = "snake_case")]
 async fn save_project_to(file_path: String, json: String) -> Value {
-    match std::fs::write(&file_path, json) {
+    match write_atomic(std::path::Path::new(&file_path), json.as_bytes()) {
         Ok(()) => json!({"ok": true, "filePath": file_path}),
         Err(e) => json!({"ok": false, "error": e.to_string()}),
     }
@@ -336,6 +356,14 @@ async fn export_zip(
     }
 }
 
+/// Layout templates a recipe folder can contain (mirrors LPRecipe.LAYOUTS).
+const LAYOUT_FILES: &[&str] = &[
+    "full.liquid",
+    "half_horizontal.liquid",
+    "half_vertical.liquid",
+    "quadrant.liquid",
+];
+
 #[tauri::command(rename_all = "snake_case")]
 async fn export_folder(
     app: tauri::AppHandle,
@@ -353,6 +381,14 @@ async fn export_folder(
     let base = std::path::Path::new(&dir.to_string()).join(slugify(&suggested_name));
     let result = (|| -> std::io::Result<()> {
         std::fs::create_dir_all(&base)?;
+        // Re-exporting over an earlier export: drop layouts that are now disabled,
+        // or the folder keeps serving a layout the recipe no longer has.
+        for layout in LAYOUT_FILES {
+            let stale = base.join(layout);
+            if !files.contains_key(*layout) && stale.is_file() {
+                std::fs::remove_file(stale)?;
+            }
+        }
         for (name, contents) in &files {
             let path = base.join(name);
             if let Some(parent) = path.parent() {
@@ -583,6 +619,25 @@ fn smoke_report(result: String) {
 /* app entry                                                           */
 /* ------------------------------------------------------------------ */
 
+/* ------------------------------------------------------------------ */
+/* close guard (unsaved changes)                                       */
+/* ------------------------------------------------------------------ */
+
+/// Mirrors LPState.isDirty(); the UI reports every change.
+static DIRTY: AtomicBool = AtomicBool::new(false);
+
+#[tauri::command(rename_all = "snake_case")]
+fn set_dirty(dirty: bool) {
+    DIRTY.store(dirty, Ordering::SeqCst);
+}
+
+/// Called by the UI once the user confirmed discarding unsaved changes.
+#[tauri::command(rename_all = "snake_case")]
+fn close_window(window: tauri::WebviewWindow) {
+    DIRTY.store(false, Ordering::SeqCst);
+    let _ = window.destroy();
+}
+
 fn main() {
     let smoke_test = std::env::args().any(|a| a == "--smoke-test");
 
@@ -598,8 +653,26 @@ fn main() {
             lp_test_connection,
             lp_list_plugin_settings,
             lp_push_recipe,
+            set_dirty,
+            close_window,
             smoke_report,
-        ]);
+        ])
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if !DIRTY.load(Ordering::SeqCst) {
+                    return;
+                }
+                // Let the page ask; it calls close_window if the user agrees
+                // (or straight away if the page never booted its handler).
+                if let Some(webview) = window.app_handle().get_webview_window(window.label()) {
+                    let js = "window.lpConfirmClose ? window.lpConfirmClose() \
+                              : window.__TAURI__.core.invoke('close_window')";
+                    if webview.eval(js).is_ok() {
+                        api.prevent_close();
+                    }
+                }
+            }
+        });
 
     if smoke_test {
         builder = builder.setup(|app| {
@@ -638,6 +711,18 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn write_atomic_replaces_and_leaves_no_temp_file() {
+        let dir = std::env::temp_dir().join(format!("lps-atomic-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("p.lpsproj.json");
+        write_atomic(&path, b"first").unwrap();
+        write_atomic(&path, b"second").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "second");
+        assert!(!dir.join("p.lpsproj.json.tmp").exists());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn slugify_basic() {

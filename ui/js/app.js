@@ -73,6 +73,7 @@
   }
 
   /* ---------------- dirty / title ---------------- */
+  let reportedDirty = null; /* last value sent to the backend close guard */
   function updateDirty() {
     const dirty = LPState.isDirty();
     document.getElementById('dirty-indicator').hidden = !dirty;
@@ -81,7 +82,18 @@
     document.title = 'Larapaper Studio — ' + base + (dirty ? ' •' : '');
     document.getElementById('btn-undo').disabled = !LPState.canUndo();
     document.getElementById('btn-redo').disabled = !LPState.canRedo();
+    if (dirty !== reportedDirty) {
+      reportedDirty = dirty;
+      window.lp.setDirty(dirty).catch(() => { reportedDirty = null; });
+    }
   }
+
+  /* Called by the backend when the window close button is hit with unsaved changes. */
+  window.lpConfirmClose = function () {
+    if (!LPState.isDirty() || window.confirm('You have unsaved changes. Close without saving?')) {
+      window.lp.closeWindow();
+    }
+  };
 
   /* ---------------- project actions ---------------- */
   async function saveProject() {

@@ -232,6 +232,10 @@ window.LPPanelSources = (function () {
       });
       if (!r || !r.ok) {
         fetchState[id] = { ok: false, status: r && r.status, error: (r && r.error) || 'Request failed' };
+      } else if (r.status !== undefined && (r.status < 200 || r.status > 299)) {
+        /* e.g. a 401 for a wrong API key — don't offer the error body as sample data */
+        const body = typeof r.body === 'string' ? r.body : JSON.stringify(r.json !== undefined ? r.json : '');
+        fetchState[id] = { ok: false, status: r.status, error: 'HTTP ' + r.status + (body ? ': ' + body.slice(0, 200) : '') };
       } else {
         let payload = r.json !== undefined ? r.json : r.body;
         if (typeof payload === 'string') payload = JSON.parse(payload);

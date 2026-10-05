@@ -34,6 +34,9 @@ window.lp = (function () {
       base_url: p.baseUrl, token: p.token, trmnlp_id: p.trmnlpId == null || p.trmnlpId === '' ? null : String(p.trmnlpId), /* Rust takes Option<String>; ids arrive as numbers */
       name: p.name, files: p.files
     }),
+    /* close guard: Rust blocks window close while dirty and calls window.lpConfirmClose */
+    setDirty: (dirty) => invoke('set_dirty', { dirty: !!dirty }),
+    closeWindow: () => invoke('close_window'),
     /* generic HTTP (used by the Sources panel; headers: [{ key, value }]) */
     httpRequest: (p) => invoke('http_request', {
       method: p.method, url: p.url, headers: p.headers || [], body: p.body || null,
