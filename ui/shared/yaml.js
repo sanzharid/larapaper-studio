@@ -16,14 +16,25 @@
   'use strict';
 
   const PLAIN_FORBIDDEN_START = /^[!&*?|>@`"'%#,[\]{}\s-]|-\s/;
-  const LOOKS_SPECIAL = /^(null|~|true|false|yes|no|on|off)$/i;
-  const LOOKS_NUMERIC = /^[-+]?(\d+\.?\d*|\.\d+)(e[-+]?\d+)?$/i;
+  // YAML 1.1 is what Larapaper's parser (Symfony YAML) and Ruby's Psych speak, so
+  // its wider set of implicit types must be quoted too: y/n booleans, `=`/`<<`,
+  // hex/octal/binary/underscored numbers, .inf/.nan, sexagesimal (12:30 -> 750)
+  // and timestamps (2024-01-01 -> a date).
+  const LOOKS_SPECIAL = /^(null|~|true|false|yes|no|on|off|y|n|=|<<)$/i;
+  const LOOKS_NUMERIC = /^[-+]?(\d[\d_]*\.?[\d_]*|\.\d[\d_]*)(e[-+]?\d+)?$/i;
+  const LOOKS_NUMERIC_OTHER = /^([-+]?0[xob][0-9a-f_]+|[-+]?\.(inf|nan)|[-+]?\d[\d_]*(:[0-5]?\d)+(\.[\d_]*)?)$/i;
+  const LOOKS_TIMESTAMP = /^\d{4}-\d\d?-\d\d?([Tt\s]|$)/;
+  // Characters YAML can't carry in a plain or literal-block scalar.
+  const NON_PRINTABLE = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/;
 
   function needsQuotes(str) {
     if (str === '') return true;
     if (PLAIN_FORBIDDEN_START.test(str)) return true;
     if (LOOKS_SPECIAL.test(str)) return true;
     if (LOOKS_NUMERIC.test(str)) return true;
+    if (LOOKS_NUMERIC_OTHER.test(str)) return true;
+    if (LOOKS_TIMESTAMP.test(str)) return true;
+    if (NON_PRINTABLE.test(str)) return true;
     if (/:(\s|$)/.test(str)) return true;       // "key: value" inside scalar
     if (/\s#/.test(str)) return true;            // comment start
     if (/[{}[\],]/.test(str) && /^[{[]/.test(str)) return true;
@@ -36,11 +47,28 @@
       .replace(/\\/g, '\\\\')
       .replace(/"/g, '\\"')
       .replace(/\t/g, '\\t')
-      .replace(/\r/g, '') + '"';
+      .replace(/\n/g, '\\n')
+      .replace(/[\x00-\x08\x0b-\x1f\x7f]/g, function (c) {
+        return '\\x' + ('0' + c.charCodeAt(0).toString(16)).slice(-2);
+      }) + '"';
   }
 
   function isMultiline(str) {
     return str.indexOf('\n') !== -1;
+  }
+
+  /**
+   * Block scalar header (`|` plus indicators) that round-trips `str` exactly:
+   * an explicit indentation indicator when the content starts with whitespace
+   * (otherwise YAML would infer the indent from it), and a chomping indicator
+   * matching the number of trailing newlines.
+   */
+  function blockHeader(str) {
+    const indentInd = /^[ \t\n]/.test(str) ? '2' : '';
+    const trailing = /\n*$/.exec(str)[0].length;
+    // (an all-newline string has no content line for clip to keep a break after)
+    const chomp = trailing === 0 ? '-' : trailing === 1 && str.length > 1 ? '' : '+';
+    return '|' + indentInd + chomp;
   }
 
   function indentLines(text, indent) {
@@ -52,10 +80,11 @@
     if (value === null || value === undefined) return '';
     if (typeof value === 'number' && isFinite(value)) return String(value);
     if (typeof value === 'boolean') return value ? 'true' : 'false';
-    const str = String(value);
+    const str = String(value).replace(/\r\n?/g, '\n');
     if (isMultiline(str)) {
-      // Literal block style; caller decides indentation. Not valid inline.
-      if (inline) return quoteString(str.replace(/\n/g, '\\n'));
+      // Literal block style; caller decides indentation. Not valid inline,
+      // and can't carry non-printable characters (those need escapes).
+      if (inline || NON_PRINTABLE.test(str)) return quoteString(str);
       return null; // signal: use block style
     }
     return needsQuotes(str) ? quoteString(str) : str;
@@ -113,8 +142,9 @@
         const scalar = emitScalar(value, indent, false);
         if (scalar === null) {
           // multi-line literal block
-          lines.push(pad + safeKey + ': |');
-          lines.push(indentLines(String(value).replace(/\s+$/g, ''), indent + 2));
+          const str = String(value).replace(/\r\n?/g, '\n');
+          lines.push(pad + safeKey + ': ' + blockHeader(str));
+          lines.push(indentLines(/\n$/.test(str) ? str.slice(0, -1) : str, indent + 2));
         } else {
           lines.push(pad + safeKey + ': ' + scalar);
         }
