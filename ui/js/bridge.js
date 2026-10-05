@@ -31,7 +31,8 @@ window.lp = (function () {
     testConnection: (p) => invoke('lp_test_connection', { base_url: p.baseUrl, token: p.token }),
     listPluginSettings: (p) => invoke('lp_list_plugin_settings', { base_url: p.baseUrl, token: p.token }),
     pushRecipe: (p) => invoke('lp_push_recipe', {
-      base_url: p.baseUrl, token: p.token, trmnlp_id: p.trmnlpId, name: p.name, files: p.files
+      base_url: p.baseUrl, token: p.token, trmnlp_id: p.trmnlpId == null || p.trmnlpId === '' ? null : String(p.trmnlpId), /* Rust takes Option<String>; ids arrive as numbers */
+      name: p.name, files: p.files
     }),
     /* generic HTTP (used by the Sources panel; headers: [{ key, value }]) */
     httpRequest: (p) => invoke('http_request', {

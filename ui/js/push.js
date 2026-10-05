@@ -181,6 +181,7 @@ window.LPPush = (function () {
         baseUrl: c.baseUrl, token: c.token,
         trmnlpId: server().trmnlpId, name: doc.name, files
       });
+      if (!r || !r.ok) throw new Error((r && r.error) || 'Push failed');
       LPState.updateServer({ trmnlpId: r.trmnlpId });
       toast('Pushed ✓ — plugin #' + r.trmnlpId + (r.created ? ' (created)' : ' (updated)'), 'ok');
       busy = false;

@@ -180,7 +180,11 @@ window.LPState = (function () {
       if (!from || !node) return;
       const parent = parentId === 'root' ? getRoot() : findNode(parentId);
       if (!parent) return;
+      /* `index` counts the moving node in its old slot (it is measured on the
+       * canvas mid-drag), so a later slot in the same parent shifts down by one. */
+      const oldIndex = (from.children || []).findIndex((c) => c.id === id);
       from.children = (from.children || []).filter((c) => c.id !== id);
+      if (index != null && from === parent && oldIndex !== -1 && oldIndex < index) index--;
       if (parent.isRoot && !node.area) autoPlaceInRoot(parent, node);
       if (!parent.isRoot && node.area) delete node.area;
       parent.children = parent.children || [];
