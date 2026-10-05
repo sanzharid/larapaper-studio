@@ -129,3 +129,29 @@ test('preview ids are injected only in preview mode', () => {
   assert.ok(html.indexOf('data-wid="' + node.id + '"') !== -1);
   W.setPreviewIds(false);
 });
+
+test('filtered expressions pass through; plain text with a pipe stays literal', () => {
+  const val = (v) => { const n = W.createNode('value'); n.props.value = v; return W.toLiquid(n); };
+  assert.match(val('data.temp | round: 1'), /\{\{ data\.temp \| round: 1 \}\}/);
+  assert.match(val('value | round'), /\{\{ value \| round \}\}/);
+  assert.match(val('Rain | Wind'), /\{\{ 'Rain \| Wind' \}\}/);
+  const out = L.render(val('data.temp | round: 1'), { data: { temp: 21.46 } });
+  assert.match(out, />21\.5</);
+});
+
+test('image src keeps Liquid code intact, escapes literal text', () => {
+  const img = W.createNode('image');
+  img.props.src = '{{ data.missing | default: "https://x/f.png" }}';
+  assert.match(W.toLiquid(img), /src="\{\{ data\.missing \| default: "https:\/\/x\/f\.png" \}\}"/);
+  img.props.src = '{{ data.url }}?a=1&b="2"';
+  assert.match(W.toLiquid(img), /src="\{\{ data\.url \}\}\?a=1&amp;b=&quot;2&quot;"/);
+});
+
+test('table columns accept the item.key form shown in the hint', () => {
+  const t = W.createNode('table');
+  t.props.columns = 'Name:item.name\nAge:age';
+  const liquid = W.toLiquid(t);
+  assert.match(liquid, /\{\{ item\.name \}\}/);
+  assert.match(liquid, /\{\{ item\.age \}\}/);
+  assert.doesNotMatch(liquid, /item\.item\./);
+});

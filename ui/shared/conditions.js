@@ -144,13 +144,16 @@
   /**
    * Liquid literal for equals/not_equals: real numbers/booleans (and the
    * literals 'true'/'false') pass bare; strings are quoted — '34' stays '34'
-   * so string fields (e.g. GVB publicName) compare correctly server-side.
+   * so string fields (e.g. GVB publicName) compare correctly server-side —
+   * unless the sample data holds a number at the path: Liquid's `0 == '0'` is
+   * false, so a typed '0' must then be emitted as the number 0.
    */
-  function literal(value) {
+  function literal(value, sampleValue) {
     if (typeof value === 'number' && isFinite(value)) return String(value);
     if (typeof value === 'boolean') return String(value);
     const s = String(value == null ? '' : value).trim();
     if (s === 'true' || s === 'false') return s;
+    if (typeof sampleValue === 'number' && /^-?\d+(\.\d+)?$/.test(s)) return s;
     if (s.indexOf("'") === -1) return "'" + s + "'";
     if (s.indexOf('"') === -1) return '"' + s + '"';
     return "'" + s.replace(/'/g, "\\'") + "'";
@@ -224,7 +227,7 @@
 
     if (op === 'equals' || op === 'not_equals') {
       return {
-        open: '{% if ' + path + (op === 'equals' ? ' == ' : ' != ') + literal(condition.value) + ' %}',
+        open: '{% if ' + path + (op === 'equals' ? ' == ' : ' != ') + literal(condition.value, valueAtPath(sampleData, path)) + ' %}',
         close: '{% endif %}'
       };
     }

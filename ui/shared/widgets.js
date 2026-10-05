@@ -86,6 +86,16 @@
     return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
   }
 
+  /**
+   * escAttr for attribute values that may contain Liquid: only the literal text is
+   * escaped. Liquid runs before the HTML is parsed, so the code inside {{ }} / {% %}
+   * must stay intact (escaping turned `default: "x"` into `default: &quot;x&quot;`).
+   */
+  function escAttrLiquid(s) {
+    return String(s == null ? '' : s).split(/(\{\{[\s\S]*?\}\}|\{%[\s\S]*?%\})/)
+      .map((part, i) => (i % 2 ? part : escAttr(part))).join('');
+  }
+
   /* When enabled (editor preview only), widget root elements carry data-wid. */
   let previewIds = false;
   function setPreviewIds(v) { previewIds = !!v; }
@@ -124,17 +134,32 @@
     return "'" + s.replace(/'/g, "\\'") + "'";
   }
 
+  const NUMBER_RE = /^-?\d+(\.\d+)?$/;
+  const PATH_RE = /^[a-zA-Z_][\w-]*(\.[\w-]+|\[[^\]]+])*$/;
+  /* A path or number followed by a filter chain, e.g. `data.temp | round: 1`. A bare
+   * word only counts when the filter is a known one, so text like "Rain | Wind"
+   * stays a literal. */
+  const FILTERED_RE = /^([a-zA-Z_][\w-]*((\.[\w-]+|\[[^\]]+])*)|-?\d+(\.\d+)?)\s*\|\s*([a-zA-Z_]\w*)/;
+  const KNOWN_FILTERS = ('abs append at_least at_most capitalize ceil compact concat date default divided_by ' +
+    'downcase escape escape_once first floor join last lstrip map minus modulo newline_to_br plus prepend ' +
+    'remove remove_first replace replace_first reverse round rstrip size slice sort sort_natural split strip ' +
+    'strip_html strip_newlines sum times truncate truncatewords uniq upcase url_decode url_encode where ' +
+    'number_with_delimiter number_to_currency pluralize json qr_code').split(' ');
+  function isFilteredExpr(s) {
+    const m = FILTERED_RE.exec(s);
+    return !!m && (!!m[2] || /^-?\d/.test(m[1]) || KNOWN_FILTERS.indexOf(m[5]) !== -1);
+  }
+
   /**
    * Normalize a user-typed value into a Liquid output expression.
-   * Pass-through if it already contains Liquid; numbers and path-like input
-   * become {{ path }}; anything else becomes a quoted string literal.
+   * Pass-through if it already contains Liquid; numbers, path-like input and
+   * filtered paths become {{ expr }}; anything else becomes a quoted string literal.
    */
   function asExpr(s) {
     s = String(s == null ? '' : s).trim();
     if (s === '') return "''";
     if (s.indexOf('{{') !== -1 || s.indexOf('{%') !== -1) return s;
-    if (/^-?\d+(\.\d+)?$/.test(s)) return '{{ ' + s + ' }}';
-    if (/^[a-zA-Z_][\w-]*(\.[\w-]+|\[[^\]]+])*$/.test(s)) return '{{ ' + s + ' }}';
+    if (NUMBER_RE.test(s) || PATH_RE.test(s) || isFilteredExpr(s)) return '{{ ' + s + ' }}';
     return '{{ ' + liquidQuote(s) + ' }}';
   }
 
@@ -376,7 +401,7 @@
       const p = node.props;
       const styles = dimStyles(p);
       if (p.rounded === 'rounded--full' && (p.fit === 'cover' || p.fit === 'contain')) styles.push('overflow:hidden');
-      return '<img src="' + escAttr(asExpr(p.src)) + '"' +
+      return '<img src="' + escAttrLiquid(asExpr(p.src)) + '"' +
         attrs(node, [
           'image', p.fit ? 'image--' + p.fit : '', p.rounded || '',
           p.dither ? 'image-dither' : '', p.pixelated ? 'image--pixelated' : '', p.stroke ? 'image-stroke' : ''
@@ -491,6 +516,8 @@
       if (ci === -1) out.push({ label: t, key: t });
       else out.push({ label: t.slice(0, ci).trim() || t.slice(ci + 1).trim(), key: t.slice(ci + 1).trim() });
     }
+    /* keys are relative to the loop item; accept the `item.key` form the hint shows */
+    for (const c of out) c.key = c.key.replace(/^item\./, '');
     return out.length ? out : [{ label: 'Value', key: 'value' }];
   }
 
@@ -572,7 +599,7 @@
       const p = node.props;
       let inner = '';
       if (p.image && String(p.image).trim() !== '') {
-        inner += '<img class="image" src="' + escAttr(asExpr(p.image)) + '">';
+        inner += '<img class="image" src="' + escAttrLiquid(asExpr(p.image)) + '">';
       }
       inner += '<span class="title">' + (p.title || '') + '</span>';
       if (p.instance && String(p.instance).trim() !== '') {
@@ -595,8 +622,7 @@
     const single = s.match(/^\{\{([\s\S]*)\}\}$/);
     if (single) return single[1].trim();
     if (s.indexOf('{{') !== -1 || s.indexOf('{%') !== -1) return liquidQuote(s);
-    if (/^-?\d+(\.\d+)?$/.test(s)) return s;
-    if (/^[a-zA-Z_][\w-]*(\.[\w-]+|\[[^\]]+])*$/.test(s)) return s;
+    if (NUMBER_RE.test(s) || PATH_RE.test(s) || isFilteredExpr(s)) return s;
     return liquidQuote(s);
   }
 

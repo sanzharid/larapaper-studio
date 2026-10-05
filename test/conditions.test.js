@@ -213,3 +213,10 @@ test('wrapLiquid is a no-op for widgets without a valid condition', () => {
   assert.strictEqual(C.wrapLiquid(node, '<span>x</span>', GVB),
     '{% if data.nothing == blank %}\n<span>x</span>\n{% endif %}');
 });
+
+test('equals emits a bare number when the sample data holds a number at the path', () => {
+  const eq = (data) => C.generateGuard({ enabled: true, op: 'equals', path: 'data.count', value: '0' }, data).open;
+  assert.strictEqual(eq({ count: 0 }), "{% if data.count == 0 %}");
+  assert.strictEqual(eq({ count: '0' }), "{% if data.count == '0' %}");
+  assert.strictEqual(eq(undefined), "{% if data.count == '0' %}");
+});
