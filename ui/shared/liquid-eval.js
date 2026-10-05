@@ -157,7 +157,7 @@
     default: (v, arg) => (v === NIL || v === null || v === false || v === '' || (Array.isArray(v) && v.length === 0) ? arg : v),
     upcase: (v) => toStr(v).toUpperCase(),
     downcase: (v) => toStr(v).toLowerCase(),
-    capitalize: (v) => { const s = toStr(v); return s.charAt(0).toUpperCase() + s.slice(1); },
+    capitalize: (v) => { const s = toStr(v); return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase(); },
     append: (v, a) => toStr(v) + toStr(a),
     prepend: (v, a) => toStr(a) + toStr(v),
     replace: (v, a, b) => toStr(v).split(toStr(a)).join(toStr(b)),
@@ -178,7 +178,7 @@
     truncatewords: (v, words, ellipsis) => {
       const s = toStr(v); const n = words === NIL ? 15 : toNum(words);
       const e = ellipsis === NIL ? '...' : toStr(ellipsis);
-      const ws = s.split(/\s+/);
+      const ws = s.trim().split(/\s+/);
       return ws.length > n ? ws.slice(0, n).join(' ') + e : s;
     },
     escape: (v) => escapeHtml(toStr(v)),
@@ -219,7 +219,14 @@
     plus: (v, a) => toNum(v) + toNum(a),
     minus: (v, a) => toNum(v) - toNum(a),
     times: (v, a) => toNum(v) * toNum(a),
-    divided_by: (v, a) => { const d = toNum(a); return d === 0 ? 0 : toNum(v) / d; },
+    /* integer ÷ integer is floored integer division in Liquid (10 / 3 = 3);
+       a float literal argument (`divided_by: 4.0`) keeps it a float division */
+    divided_by: function (v, a) {
+      const n = toNum(v); const d = toNum(a);
+      if (d === 0) return 0;
+      const floatArg = this && this.rawArgs && /^\s*-?\d+\.\d+\s*$/.test(this.rawArgs[0] || '');
+      return Number.isInteger(n) && Number.isInteger(d) && !floatArg ? Math.floor(n / d) : n / d;
+    },
     modulo: (v, a) => { const d = toNum(a); return d === 0 ? 0 : toNum(v) % d; },
     round: (v, places) => { const f = Math.pow(10, places === NIL ? 0 : toNum(places)); return Math.round(toNum(v) * f) / f; },
     ceil: (v) => Math.ceil(toNum(v)),
@@ -278,10 +285,11 @@
       const colonIdx = seg.indexOf(':');
       const name = (colonIdx === -1 ? seg : seg.slice(0, colonIdx)).trim();
       const argStr = colonIdx === -1 ? '' : seg.slice(colonIdx + 1);
-      const args = argStr === '' ? [] : splitTopLevel(argStr, ',').map((a) => resolvePath(a.trim(), scope));
+      const rawArgs = argStr === '' ? [] : splitTopLevel(argStr, ',');
+      const args = rawArgs.map((a) => resolvePath(a.trim(), scope));
       const fn = filters[name];
       if (fn) {
-        try { value = fn(value, args[0], args[1], args[2]); } catch (e) { value = NIL; }
+        try { value = fn.call({ rawArgs }, value, args[0], args[1], args[2]); } catch (e) { value = NIL; }
       }
       /* unknown filter: identity (forgiving preview) */
     }
@@ -442,7 +450,7 @@
     }
     const v = evalOutput(expr, scope);
     if (Array.isArray(v)) return v.slice();
-    if (v && typeof v === 'object') return Object.keys(v).map((k) => ({ key: k, value: v[k] }));
+    if (v && typeof v === 'object') return Object.keys(v).map((k) => [k, v[k]]); /* Liquid yields [key, value] pairs */
     if (v === NIL || v === null) return [];
     return [v];
   }
@@ -461,9 +469,25 @@
   }
 
   /**
+   * Locating pass: finds the stop tag ending a block without side effects
+   * (cloned scope; break/continue don't cut it short).
+   */
+  let scanning = false;
+  function scan(tokens, scope, start, stopTags) {
+    const prev = scanning;
+    scanning = true;
+    try {
+      return renderTokens(tokens, Object.assign({}, scope), start, stopTags);
+    } finally {
+      scanning = prev;
+    }
+  }
+
+  /**
    * Renders tokens[start..] until one of stopTags is hit.
-   * Returns { out, next, stopTag, stopTagText } — next is the index of the
-   * stop token (or tokens.length).
+   * Returns { out, next, stopTag, stopTagText, interrupt } — next is the index
+   * of the stop token (or tokens.length); interrupt is 'break'/'continue' when
+   * a loop control tag cut the render short (propagated up to the enclosing for).
    */
   function renderTokens(tokens, scope, start, stopTags) {
     let out = '';
@@ -494,7 +518,8 @@
         /* pre-scan on a cloned scope: the body is re-rendered for every real
            iteration below, so assign/capture side effects of this locating
            pass must not leak into the loop scope */
-        const body = renderTokens(tokens, Object.assign({}, scope), i + 1, ['endfor']);
+        const body = scan(tokens, scope, i + 1, ['else', 'endfor']);
+        const elseScan = body.stopTag === 'else' ? scan(tokens, scope, body.next + 1, ['endfor']) : null;
         if (parsed) {
           let items = resolveCollection(parsed.opts.collection, scope);
           if (parsed.opts.offset !== null) items = items.slice(toNum(evalOutput(parsed.opts.offset, scope)));
@@ -508,12 +533,19 @@
               index: idx + 1, index0: idx, rindex: len - idx, rindex0: len - idx - 1,
               first: idx === 0, last: idx === len - 1, length: len
             };
-            out += renderTokens(tokens, scope, i + 1, ['endfor']).out;
+            const res = renderTokens(tokens, scope, i + 1, ['else', 'endfor']);
+            out += res.out;
+            if (res.interrupt === 'break') break;
           }
           if (prevLoop === undefined) delete scope.forloop; else scope.forloop = prevLoop;
           delete scope[parsed.varName];
+          if (len === 0 && elseScan) {
+            const res = renderTokens(tokens, scope, body.next + 1, ['endfor']);
+            out += res.out;
+            if (res.interrupt) return { out, next: i, stopTag: null, stopTagText: null, interrupt: res.interrupt };
+          }
         }
-        i = body.next + 1;
+        i = (elseScan || body).next + 1;
         continue;
       }
 
@@ -527,22 +559,60 @@
         while (true) {
           /* locating pass on a cloned scope: assign/capture side effects of a
              branch must only happen when the branch is actually taken */
-          const scan = renderTokens(tokens, Object.assign({}, scope), i + 1, endTags);
-          if (cond && !rendered) { out += renderTokens(tokens, scope, i + 1, endTags).out; rendered = true; }
-          if (scan.stopTag === 'elsif') {
-            cond = name === 'unless' ? false : evalCondition(scan.stopTagText.slice(5), scope);
-            i = scan.next;
+          const located = scan(tokens, scope, i + 1, endTags);
+          if (cond && !rendered) {
+            const res = renderTokens(tokens, scope, i + 1, endTags);
+            out += res.out; rendered = true;
+            if (res.interrupt) return { out, next: i, stopTag: null, stopTagText: null, interrupt: res.interrupt };
+          }
+          if (located.stopTag === 'elsif') {
+            cond = name === 'unless' ? false : evalCondition(located.stopTagText.slice(5), scope);
+            i = located.next;
             continue;
           }
-          if (scan.stopTag === 'else') {
-            const elseScan = renderTokens(tokens, Object.assign({}, scope), scan.next + 1, endStop);
-            if (!rendered && !cond) { out += renderTokens(tokens, scope, scan.next + 1, endStop).out; rendered = true; }
+          if (located.stopTag === 'else') {
+            const elseScan = scan(tokens, scope, located.next + 1, endStop);
+            if (!rendered && !cond) {
+              const res = renderTokens(tokens, scope, located.next + 1, endStop);
+              out += res.out; rendered = true;
+              if (res.interrupt) return { out, next: i, stopTag: null, stopTagText: null, interrupt: res.interrupt };
+            }
             i = elseScan.next + 1;
             break;
           }
-          i = scan.next + 1;
+          i = located.next + 1;
           break;
         }
+        continue;
+      }
+
+      if (name === 'case') {
+        const subject = evalOutput(tok.value.slice(4), scope);
+        let j = i + 1;
+        let located = scan(tokens, scope, j, ['when', 'else', 'endcase']);
+        let matched = false;
+        while (located.stopTag === 'when' || located.stopTag === 'else') {
+          const isElse = located.stopTag === 'else';
+          const branch = scan(tokens, scope, located.next + 1, ['when', 'else', 'endcase']);
+          let take = false;
+          if (isElse) take = !matched;
+          else {
+            /* `when a, b` / `when a or b` — any value matches */
+            take = splitWhen(located.stopTagText.slice(4)).some((expr) => {
+              const v = evalOutput(expr, scope);
+              return v === subject || (typeof v !== 'object' && typeof subject !== 'object' && toStr(v) === toStr(subject) &&
+                typeof v === typeof subject);
+            });
+          }
+          if (take) {
+            matched = true;
+            const res = renderTokens(tokens, scope, located.next + 1, ['when', 'else', 'endcase']);
+            out += res.out;
+            if (res.interrupt) return { out, next: i, stopTag: null, stopTagText: null, interrupt: res.interrupt };
+          }
+          located = branch;
+        }
+        i = located.next + 1;
         continue;
       }
 
@@ -562,7 +632,7 @@
       }
 
       if (name === 'comment') {
-        const body = renderTokens(tokens, scope, i + 1, ['endcomment']);
+        const body = scan(tokens, scope, i + 1, ['endcomment']);
         i = body.next + 1;
         continue;
       }
@@ -582,12 +652,33 @@
         continue;
       }
 
-      if (name === 'break' || name === 'continue') { i++; continue; }
+      if (name === 'break' || name === 'continue') {
+        if (scanning) { i++; continue; }
+        return { out, next: i, stopTag: null, stopTagText: null, interrupt: name };
+      }
 
       /* unknown / unhandled tag: drop it */
       i++;
     }
     return { out, next: i, stopTag: null, stopTagText: null };
+  }
+
+  /** Splits a `when` list on commas / `or` outside quotes. */
+  function splitWhen(list) {
+    const parts = [];
+    let cur = '';
+    let quote = null;
+    const s = String(list);
+    for (let k = 0; k < s.length; k++) {
+      const c = s[k];
+      if (quote) { cur += c; if (c === quote) quote = null; continue; }
+      if (c === '"' || c === "'") { quote = c; cur += c; continue; }
+      if (c === ',') { parts.push(cur); cur = ''; continue; }
+      if (/\s/.test(c) && /^or\s/.test(s.slice(k + 1)) && /\S/.test(cur)) { parts.push(cur); cur = ''; k += 2; continue; }
+      cur += c;
+    }
+    parts.push(cur);
+    return parts.map((p) => p.trim()).filter(Boolean);
   }
 
   function render(template, context, opts) {

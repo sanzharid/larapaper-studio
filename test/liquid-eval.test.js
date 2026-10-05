@@ -14,7 +14,10 @@ const ctx = {
 test('output + arithmetic filters', () => {
   assert.strictEqual(L.render('{{ percent | times: 100 | divided_by: 100 | round }}', ctx), '64');
   assert.strictEqual(L.render('{{ 5 | plus: 3 | minus: 1 }}', ctx), '7');
-  assert.strictEqual(L.render('{{ 10 | divided_by: 4 }}', ctx), '2.5');
+  // integer ÷ integer floors, as in Liquid on the device; a float operand doesn't
+  assert.strictEqual(L.render('{{ 10 | divided_by: 4 }}', ctx), '2');
+  assert.strictEqual(L.render('{{ 10 | divided_by: 4.0 }}', ctx), '2.5');
+  assert.strictEqual(L.render('{{ 7.5 | divided_by: 2 }}', ctx), '3.75');
   assert.strictEqual(L.render('{{ 3.14159 | round: 2 }}', ctx), '3.14');
 });
 
@@ -146,4 +149,25 @@ test('placeholderUnknown: logic tags keep forgiving behavior; flag off = old beh
   assert.strictEqual(L.render('{{ nosuch }}', ctx), '');
   assert.strictEqual(L.render('{{ nosuch | upcase }}', ctx), '');
   assert.strictEqual(L.render('{{ nosuch }}', ctx, { placeholderUnknown: false }), '');
+});
+
+test('case/when, for-else, break/continue and hash iteration follow Liquid', () => {
+  const r = (tpl, c) => L.render(tpl, c || {});
+  const kase = '{% case x %}{% when 1 %}one{% when 2, 3 %}two{% when "a" or "b" %}ab{% else %}other{% endcase %}';
+  assert.strictEqual(r(kase, { x: 3 }), 'two');
+  assert.strictEqual(r(kase, { x: 'b' }), 'ab');
+  assert.strictEqual(r(kase, { x: 9 }), 'other');
+  const forElse = '{% for i in arr %}{{ i }}{% else %}none{% endfor %}';
+  assert.strictEqual(r(forElse, { arr: [1, 2] }), '12');
+  assert.strictEqual(r(forElse, { arr: [] }), 'none');
+  assert.strictEqual(r('{% for i in (1..5) %}{% if i > 2 %}{% break %}{% endif %}{{ i }}{% endfor %}'), '12');
+  assert.strictEqual(r('{% for i in (1..3) %}{% if i == 2 %}{% continue %}{% endif %}{{ i }}{% endfor %}'), '13');
+  assert.strictEqual(r('{% for i in (1..2) %}{% for j in (1..3) %}{% if j == 2 %}{% break %}{% endif %}{{ i }}{{ j }}{% endfor %}{% endfor %}'), '1121');
+  assert.strictEqual(r('{% for p in h %}{{ p[0] }}={{ p[1] }};{% endfor %}', { h: { a: 1, b: 2 } }), 'a=1;b=2;');
+  assert.strictEqual(r('{% assign x = 1 %}{% comment %}{% assign x = 2 %}{% endcomment %}{{ x }}'), '1');
+});
+
+test('capitalize and truncatewords match Liquid', () => {
+  assert.strictEqual(L.render('{{ "hELLO wORLD" | capitalize }}', {}), 'Hello world');
+  assert.strictEqual(L.render('{{ "  hello  world " | truncatewords: 1 }}', {}), 'hello...');
 });
